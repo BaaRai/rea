@@ -238,7 +238,7 @@ const addImportRelationship = (
 ): void => {
   const target = resolveModuleTarget(input, origin.specifier);
   // A specifier that resolves back to the importing module itself (a literal
-  // self-import, or a TypeScript-style extension rewrite onto the same file)
+  // self-import, self-require, or artifact-confined path alias)
   // cannot become an edge: the application graph forbids self-referential
   // edges, and emitting one fails result validation for the whole analysis.
   if (target.node.node_id === source.node_id) {

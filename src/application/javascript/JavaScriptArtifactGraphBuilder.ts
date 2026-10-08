@@ -176,9 +176,7 @@ const applicationGraphResourceLimit = (
 const graphLimitations = (
   context: JavaScriptArtifactGraphContext,
   coverage: "complete" | "partial" | "unknown" | "unavailable",
-  relationshipOmissions: JavaScriptModuleRelationshipOmissions = {
-    selfImports: 0,
-  },
+  relationshipOmissions: JavaScriptModuleRelationshipOmissions,
 ): string[] => {
   const ipc = collectElectronIpcRecords(context.analysis);
   const pairings = classifyElectronIpcPairings(ipc);
