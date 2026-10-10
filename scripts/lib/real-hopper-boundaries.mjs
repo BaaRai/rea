@@ -42,7 +42,13 @@ export async function verifyHopperBoundaryContracts(
       ajv.validateSchema(tool.outputSchema),
       `${tool.name} output schema`,
     );
-    validators.set(tool.name, ajv.compile(tool.outputSchema));
+    // Tools with identical output schemas share one content-derived $id, so
+    // reuse the already-compiled validator instead of re-registering the id.
+    validators.set(
+      tool.name,
+      (tool.outputSchema?.$id && ajv.getSchema(tool.outputSchema.$id)) ||
+        ajv.compile(tool.outputSchema),
+    );
   }
   let successfulCalls = 0;
   let rejectedCalls = 0;

@@ -83,12 +83,16 @@ window.loadFile("renderer.html");require("node:fs").writeFileSync(${JSON.stringi
     const endpoint = await waitForEndpoint(application, () => stderr);
     await client.connect(transport);
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    // Tools with identical schemas share one content-derived $id, so reuse an
+    // already-compiled validator instead of re-registering the same id.
+    const compileToolSchema = (schema) =>
+      (schema?.$id && ajv.getSchema(schema.$id)) || ajv.compile(schema);
     const validators = new Map(
       (await client.listTools()).tools.map((tool) => {
-        ajv.compile(tool.inputSchema);
+        compileToolSchema(tool.inputSchema);
         return [
           tool.name,
-          tool.outputSchema ? ajv.compile(tool.outputSchema) : undefined,
+          tool.outputSchema ? compileToolSchema(tool.outputSchema) : undefined,
         ];
       }),
     );
