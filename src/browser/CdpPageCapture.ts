@@ -17,7 +17,7 @@ import {
   captureFrames,
   captureResources,
   type CapturedResource,
-  mainFrameUrl,
+  resolvedMainFrameUrl,
 } from "./CdpCaptureDocuments.js";
 import {
   allowedSanitizedUrl,
@@ -100,20 +100,26 @@ const captureAuthorizedPage = async (
   const { context, allowedOrigins, limitations } = state;
   const { connection, sessionId, input, signal } = context;
   await authorizeObservationWindow(state);
-  await captureJsonResponseBodies(state);
+  captureJsonResponseBodies(state);
   const frameResult = await authorizedMainFrame({
     connection: context.connection,
     sessionId: context.sessionId,
     signal: context.signal,
     allowedOrigins,
     operation: context.operation,
+    authorizedTargetUrl: context.target.url,
   });
-  const attachedUrl = mainFrameUrl(frameResult) ?? "";
+  const attachedUrl = resolvedMainFrameUrl(
+    frameResult,
+    context.target.url,
+    allowedOrigins,
+  );
   const frameCapture = captureFrames(
     frameResult,
     allowedOrigins,
     undefined,
     state.events.completeness,
+    context.target.url,
   );
   const frames = frameCapture.items;
   const captureFrame = frames[0];
@@ -154,8 +160,13 @@ const captureAuthorizedPage = async (
     signal: context.signal,
     allowedOrigins,
     operation: context.operation,
+    authorizedTargetUrl: context.target.url,
   });
-  const completedUrl = mainFrameUrl(completedFrameResult) ?? "";
+  const completedUrl = resolvedMainFrameUrl(
+    completedFrameResult,
+    context.target.url,
+    allowedOrigins,
+  );
   if (state.events.originViolation)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   if (state.events.navigationDuringCapture || completedUrl !== attachedUrl)
@@ -235,8 +246,15 @@ const authorizeObservationWindow = async (
     signal: context.signal,
     allowedOrigins,
     operation: context.operation,
+    authorizedTargetUrl: context.target.url,
   });
-  const mainFrame = captureFrames(initialFrameResult, allowedOrigins).items[0];
+  const mainFrame = captureFrames(
+    initialFrameResult,
+    allowedOrigins,
+    undefined,
+    undefined,
+    context.target.url,
+  ).items[0];
   if (mainFrame === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   events.beginAuthorizedFrame(mainFrame.frame_id);
@@ -270,6 +288,7 @@ const capturePageDom = async (
     allowedOrigins,
     context.input,
     state.events.completeness,
+    context.target.url,
   );
 };
 

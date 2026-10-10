@@ -1,6 +1,7 @@
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import { CdpConnection } from "./CdpConnection.js";
+import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import {
   captureStorageFingerprints,
@@ -13,6 +14,31 @@ import {
   recordsValue,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
+
+/** Tolerate storage requests the browser cannot resolve.
+ *
+ * Chromium 150 masks frame origins, so its storage agents reject otherwise
+ * valid, attach-authorized requests with frame-not-found errors under
+ * different codes and wordings. These probes are optional evidence, so any
+ * browser-side command rejection is unavailability; transport and
+ * cancellation failures still propagate.
+ */
+const storageOptionalCommand = async (
+  context: Parameters<typeof captureStorage>[0],
+  method: string,
+  parameters: Readonly<Record<string, unknown>>,
+  limitations: string[],
+): Promise<unknown | undefined> => {
+  try {
+    return await optionalCdpCommand(context, method, parameters, limitations);
+  } catch (cause: unknown) {
+    if (cause instanceof CdpCommandRejection) {
+      limitations.push(method + " was unavailable from this browser target.");
+      return undefined;
+    }
+    throw cause;
+  }
+};
 
 /** Capture redacted storage metadata for an authorized page and its origin. */
 export const captureStorage = async (
@@ -29,7 +55,7 @@ export const captureStorage = async (
 }> => {
   const origin = new URL(pageUrl).origin;
   const quota = recordValue(
-    await optionalCdpCommand(
+    await storageOptionalCommand(
       context,
       "Storage.getUsageAndQuota",
       { origin },
@@ -43,7 +69,7 @@ export const captureStorage = async (
     ? await storageItems(context, origin, false, limitations)
     : emptyStorageItems;
   const indexedRaw = context.input.include_storage_keys
-    ? await optionalCdpCommand(
+    ? await storageOptionalCommand(
         context,
         "IndexedDB.requestDatabaseNames",
         { securityOrigin: origin },
@@ -53,7 +79,7 @@ export const captureStorage = async (
   const indexedValues = recordValue(indexedRaw)?.databaseNames;
   const indexed = stringArray(indexedValues);
   const cacheRaw = context.input.include_storage_keys
-    ? await optionalCdpCommand(
+    ? await storageOptionalCommand(
         context,
         "CacheStorage.requestCacheNames",
         { securityOrigin: origin },
@@ -62,18 +88,29 @@ export const captureStorage = async (
     : undefined;
   const cacheValues = recordsValue(recordValue(cacheRaw)?.caches);
   const caches = capturedCaches(cacheValues);
-  const fingerprints = context.input.include_storage_fingerprints
-    ? await captureStorageFingerprints({
-        context,
-        origin,
-        cookieUrl: pageUrl,
-        local,
-        session,
-        indexedDbNames: indexed,
-        caches,
-        limitations,
-      })
-    : { items: [], complete: false };
+  // Masked builds whose storage agents reject every request also hang on the
+  // deeper fingerprint probes, so skip them once the discovery probes
+  // themselves were unavailable.
+  const storageDiscoveryUnavailable =
+    context.input.include_storage_keys &&
+    (indexedRaw === undefined || cacheRaw === undefined);
+  if (storageDiscoveryUnavailable)
+    limitations.push(
+      "Storage fingerprints were skipped because this browser target's storage agents were unavailable.",
+    );
+  const fingerprints =
+    context.input.include_storage_fingerprints && !storageDiscoveryUnavailable
+      ? await captureStorageFingerprints({
+          context,
+          origin,
+          cookieUrl: pageUrl,
+          local,
+          session,
+          indexedDbNames: indexed,
+          caches,
+          limitations,
+        })
+      : { items: [], complete: false };
   const structuredStorageComplete =
     indexedRaw !== undefined &&
     Array.isArray(indexedValues) &&
@@ -117,7 +154,7 @@ const storageItems = async (
   isLocalStorage: boolean,
   limitations: string[],
 ): Promise<CapturedStorageItems> => {
-  const raw = await optionalCdpCommand(
+  const raw = await storageOptionalCommand(
     context,
     "DOMStorage.getDOMStorageItems",
     { storageId: { securityOrigin: origin, isLocalStorage } },

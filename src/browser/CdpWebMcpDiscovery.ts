@@ -15,6 +15,7 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import {
   allowedSanitizedUrl,
   delayWithCancellation,
+  isUnparseableFrameUrl,
   numberValue,
   recordValue,
   recordsValue,
@@ -61,13 +62,17 @@ export const discoverWebMcp = async (
     context.signal,
   );
   const initialUrl = mainFrameUrl(frameTree);
-  if (allowedSanitizedUrl(initialUrl, origins) === undefined)
+  if (
+    authorizedMainFrameUrl(initialUrl, context.target.url, origins) ===
+    undefined
+  )
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   const frames = captureFrames(
     frameTree,
     origins,
     undefined,
     completeness,
+    context.target.url,
   ).items;
   const frameUrls = initialFrameScope(frameTree, frames, completeness);
   const tools = new Map<string, WebMcpDiscovery["tools"]["items"][number]>();
@@ -336,11 +341,30 @@ const assertStableAuthorizedFrame = async (
     context.signal,
   );
   const finalUrl = mainFrameUrl(finalTree);
-  if (allowedSanitizedUrl(finalUrl, origins) === undefined)
+  if (
+    authorizedMainFrameUrl(finalUrl, context.target.url, origins) === undefined
+  )
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   if (finalUrl !== initialUrl)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
 };
+
+/**
+ * Resolve the URL an observation is gated on. Chromium 150 reports an
+ * unparseable placeholder as the frame-tree URL, so a frame tree that carries
+ * no URL evidence falls back to the target URL that authorizeCdpTarget
+ * already gated the attach on; a parsed but out-of-scope origin still
+ * rejects.
+ */
+const authorizedMainFrameUrl = (
+  frameUrl: string | undefined,
+  targetUrl: string,
+  origins: ReadonlySet<string>,
+) =>
+  allowedSanitizedUrl(frameUrl, origins) ??
+  (frameUrl === undefined || isUnparseableFrameUrl(frameUrl)
+    ? allowedSanitizedUrl(targetUrl, origins)
+    : undefined);
 
 interface WebMcpIngestOptions {
   readonly event: CdpEvent;

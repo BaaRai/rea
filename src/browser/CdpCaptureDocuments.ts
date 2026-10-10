@@ -2,6 +2,7 @@ import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import {
   allowedSanitizedUrl,
+  isUnparseableFrameUrl,
   numberValue,
   recordValue,
   recordsValue,
@@ -23,6 +24,7 @@ export const captureFrames = (
   allowedOrigins: ReadonlySet<string>,
   maximum?: number,
   completeness?: CdpCaptureCompleteness,
+  authorizedMainFrameUrl?: string,
 ): {
   readonly items: WebPageInspection["frames"];
 } => {
@@ -37,10 +39,20 @@ export const captureFrames = (
   )) {
     const frame = recordValue(tree.frame);
     const frameId = cdpStringValue(frame?.id);
-    const sanitized = allowedSanitizedUrl(frame?.url, allowedOrigins);
+    let sanitized = allowedSanitizedUrl(frame?.url, allowedOrigins);
     if (frame === undefined || frameId === undefined) {
       completeness?.exclude("frames", "invalid_protocol_value");
       continue;
+    }
+    if (sanitized === undefined && frame.parentId === undefined) {
+      // Chromium 150 reports an origin-less placeholder as the main-frame URL;
+      // the attach-authorized target URL recovers that root without speaking
+      // for any child frame.
+      const recovered =
+        authorizedMainFrameUrl === undefined
+          ? undefined
+          : allowedSanitizedUrl(authorizedMainFrameUrl, allowedOrigins);
+      if (recovered !== undefined) sanitized = recovered;
     }
     if (sanitized === undefined || sanitized.origin === null) {
       completeness?.exclude(
@@ -58,6 +70,30 @@ export const captureFrames = (
     });
   }
   return { items };
+};
+
+/** Resolve the main-frame URL a capture is attached to.
+ *
+ * Chromium 150 reports an unparseable placeholder as the frame-tree URL, so
+ * URL-less evidence falls back to the attach-authorized target URL, always
+ * re-validated against the same origin scope.
+ */
+export const resolvedMainFrameUrl = (
+  frameResult: unknown,
+  authorizedTargetUrl: string | undefined,
+  allowedOrigins: ReadonlySet<string>,
+): string => {
+  const url = mainFrameUrl(frameResult);
+  const sanitized = allowedSanitizedUrl(url, allowedOrigins);
+  if (sanitized !== undefined) return sanitized.url;
+  if (
+    authorizedTargetUrl !== undefined &&
+    (url === undefined || isUnparseableFrameUrl(url))
+  ) {
+    const fallback = allowedSanitizedUrl(authorizedTargetUrl, allowedOrigins);
+    if (fallback !== undefined) return fallback.url;
+  }
+  return url ?? "";
 };
 
 /** Read the current main-frame URL from an untrusted Page.getFrameTree result. */
@@ -138,6 +174,7 @@ export const captureDom = (
   allowedOrigins: ReadonlySet<string>,
   input: InspectWebPageInput,
   completeness?: CdpCaptureCompleteness,
+  authorizedMainFrameUrl?: string,
 ): {
   readonly total: number;
   readonly nodes: WebPageInspection["dom"]["nodes"];
@@ -154,12 +191,26 @@ export const captureDom = (
   const agentHints: WebPageInspection["metadata"]["agent_hints"] = [];
   let excludedUrls = 0;
   let total = 0;
+  let firstDocument = true;
   for (const document of recordsValue(root.documents)) {
-    const documentUrl = indexedString(strings, document.documentURL);
-    if (allowedSanitizedUrl(documentUrl, allowedOrigins) === undefined) {
-      completeness?.exclude("dom", exclusionReasonForUrl(documentUrl));
+    const rawDocumentUrl = indexedString(strings, document.documentURL);
+    let sanitized = allowedSanitizedUrl(rawDocumentUrl, allowedOrigins);
+    if (
+      sanitized === undefined &&
+      firstDocument &&
+      (rawDocumentUrl === undefined || isUnparseableFrameUrl(rawDocumentUrl)) &&
+      authorizedMainFrameUrl !== undefined
+    ) {
+      // Masked builds report no URL for the main document either; the
+      // attach-authorized target URL recovers only that leading document.
+      sanitized = allowedSanitizedUrl(authorizedMainFrameUrl, allowedOrigins);
+    }
+    firstDocument = false;
+    if (sanitized === undefined) {
+      completeness?.exclude("dom", exclusionReasonForUrl(rawDocumentUrl));
       continue;
     }
+    const documentUrl = sanitized.url;
     const baseUrl = indexedString(strings, document.baseURL) || documentUrl;
     const documentNodes = recordValue(document.nodes);
     if (documentNodes === undefined) continue;

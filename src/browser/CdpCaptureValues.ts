@@ -78,6 +78,20 @@ export const isHttpUrl = (value: string | undefined): boolean => {
   }
 };
 
+/** True only for opaque placeholders that parse as no URL at all. */
+export const isUnparseableFrameUrl = (value: string | undefined): boolean => {
+  // Masked builds report either ":" or the empty string; an absent field may
+  // still be a transient pre-commit tree, so only strings fall through.
+  if (value === undefined) return false;
+  if (value.length === 0) return true;
+  try {
+    new URL(value);
+    return false;
+  } catch {
+    return true;
+  }
+};
+
 export const allowedSanitizedUrl = (
   value: unknown,
   allowedOrigins: ReadonlySet<string>,
