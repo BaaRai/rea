@@ -1,0 +1,20 @@
+{
+  "name": "VHome",
+  "version": "5.0.111-beta",
+  "source": "https://github.com/muleos/VHome-release",
+  "source_revision": "v5.0.111-beta",
+  "license": null,
+  "license_note": "Upstream declares no license; the fixture is downloaded and hash-verified at verification time and never redistributed or committed.",
+  "url": "https://github.com/muleos/VHome-release/releases/download/v5.0.111-beta/VHome-5.0.111-beta-unsigned.hap",
+  "filename": "VHome-5.0.111-beta-unsigned.hap",
+  "sha256": "a8f1ed4d1a9a29f4edbd2e8b81f4c13742f13aeb0059f60b0e859b9214a68532",
+  "unsigned": true,
+  "entry_count": 238,
+  "bytecode_entries": ["ets/modules.abc"],
+  "native_libraries": [
+    "libs/arm64-v8a/libc++_shared.so",
+    "libs/arm64-v8a/libImSDK.so",
+    "libs/arm64-v8a/libxuspine.so"
+  ],
+  "manifests": ["module.json", "pack.info"]
+}
