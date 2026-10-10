@@ -827,31 +827,48 @@ it.each([
 );
 
 it.each([
-  ["bare if", 'if (flag) alias = { mode: "other" }; alias.mode = "updated";'],
+  [
+    "bare if",
+    'if (flag) alias = { mode: "other" }; alias.mode = "updated";',
+    "unknown-coverage",
+  ],
   [
     "logical expression",
     'flag && (alias = { mode: "other" }); alias.mode = "updated";',
+    "unknown-coverage",
   ],
   [
     "logical assignment",
     'flag ||= (alias = { mode: "other" }); alias.mode = "updated";',
+    "unknown-coverage",
   ],
-  ["or assignment", 'alias ||= { mode: "other" }; alias.mode = "updated";'],
+  [
+    "or assignment",
+    'alias ||= { mode: "other" }; alias.mode = "updated";',
+    "unknown-coverage",
+  ],
   [
     "nullish assignment",
     'alias ??= { mode: "other" }; alias.mode = "updated";',
+    "unknown-coverage",
   ],
   [
     "conditional mutation",
     'alias = { mode: "other" }; if (flag) alias.mode = "updated";',
+    "unknown-coverage",
   ],
   [
     "short-circuit mutation",
     'alias = { mode: "other" }; flag && (alias.mode = "updated");',
+    // The reassignment and the guarded mutation share one statement list, so
+    // capture-time ordering proves the mutation cannot reach the shared
+    // object; the if-guarded form has no same-list proof and stays unknown.
+    // The mutation itself stays recorded on the alias binding.
+    "present",
   ],
 ])(
   "preserves possible alias mutation uncertainty in queries: %s",
-  (_label, body) => {
+  (_label, body, sharedPresence) => {
     const graph = graphFor(`
     const shared = { mode: "initial" };
     let alias = shared;
@@ -864,12 +881,19 @@ it.each([
         identity.role_key.includes("binding:shared"),
     );
     if (sharedMode === undefined) throw new Error("Expected shared mode slot");
+    const aliasMode = graph.nodes.find(
+      ({ kind, identity, properties }) =>
+        kind === "property-slot" &&
+        properties.property_pointer === "/mode" &&
+        identity.role_key.includes("binding:alias"),
+    );
     const result = queryJavaScriptSemanticGraph(graph, {
       seed: { kind: "semantic-node", node_id: sharedMode.node_id },
       direction: "backward-provenance",
     });
 
-    expect(sharedMode.properties.presence).toBe("unknown-coverage");
+    expect(sharedMode.properties.presence).toBe(sharedPresence);
+    expect(aliasMode?.properties.presence).toBe("unknown-coverage");
     expect(result.nodes).toContainEqual(
       expect.objectContaining({ node_id: sharedMode.node_id }),
     );
