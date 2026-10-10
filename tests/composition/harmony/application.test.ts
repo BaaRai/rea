@@ -1,69 +1,48 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import {
-  TextReader,
-  Uint8ArrayReader,
-  Uint8ArrayWriter,
-  ZipWriter,
-} from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createNonApplicationZipInventory,
+  inventoryApplicationPackage,
+  requireDeterministicProjection,
   requireSuccessfulProjection,
+  writeApplicationZip,
 } from "../../support/applicationSessionFixture.js";
 
 import { projectHarmonyApplicationEvidence } from "../../../src/application/harmony/HarmonyApplicationService.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
-import {
-  harmonyApplicationProjectionResultSchema,
-  projectHarmonyApplication,
-} from "../../../src/domain/harmony/harmonyApplication.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { harmonyApplicationProjectionResultSchema } from "../../../src/domain/harmony/harmonyApplication.js";
 
 const { runProviderAnalysis } = createDirectAnalysis({});
-
 const elf = Uint8Array.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]);
+
+const stageHapEntries = [
+  { path: "module.json", content: '{"module":{"name":"entry"}}' },
+  { path: "ets/modules.abc", content: "panda bytecode" },
+  { path: "libs/arm64-v8a/libentry.so", content: elf },
+  { path: "resources.index", content: "resource index" },
+  { path: "resources/base/profile/main_pages.json", content: "{}" },
+  { path: "assets/web/index.js", content: "bridge();" },
+  { path: "META-INF/FIXTURE.p7b", content: "opaque signing" },
+] as const;
 
 describe("HarmonyOS application projection", () => {
   it("projects deterministic Stage HAP components and explicit bridge hypotheses", async () => {
-    const root = await createTestTempDirectory("rea-harmony-");
-    const path = join(root, "Fixture.hap");
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add(
-      "module.json",
-      new TextReader('{"module":{"name":"entry"}}'),
+    const path = await writeApplicationZip(
+      "rea-harmony-",
+      "Fixture.hap",
+      stageHapEntries,
     );
-    await writer.add("ets/modules.abc", new TextReader("panda bytecode"));
-    await writer.add("libs/arm64-v8a/libentry.so", new Uint8ArrayReader(elf));
-    await writer.add("resources.index", new TextReader("resource index"));
-    await writer.add(
-      "resources/base/profile/main_pages.json",
-      new TextReader("{}"),
-    );
-    await writer.add("assets/web/index.js", new TextReader("bridge();"));
-    await writer.add("META-INF/FIXTURE.p7b", new TextReader("opaque signing"));
-    await writeFile(path, await writer.close());
-
-    const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
-    );
+    const inventory = await inventoryApplicationPackage(path);
     expect(inventory.subject?.format).toBe("hap");
-    const first = projectHarmonyApplicationEvidence({
-      inventory_evidence: [inventory],
-    });
-    const second = projectHarmonyApplicationEvidence({
-      inventory_evidence: [inventory],
-    });
-    const left = harmonyApplicationProjectionResultSchema.parse(
-      requireSuccessfulProjection(first).normalized_result,
+    const left = requireDeterministicProjection(
+      projectHarmonyApplicationEvidence,
+      inventory,
+      harmonyApplicationProjectionResultSchema,
     );
-    const right = harmonyApplicationProjectionResultSchema.parse(
-      requireSuccessfulProjection(second).normalized_result,
-    );
-    expect(left).toEqual(right);
     expect(left).toMatchObject({
       root_format: "hap",
       packaging_model: "stage",
@@ -101,34 +80,33 @@ describe("HarmonyOS application projection", () => {
   });
 
   it("projects App Pack children by path without recursive inventory", async () => {
-    const root = await createTestTempDirectory("rea-harmony-app-");
-    const path = join(root, "Bundle.app");
-    const entryWriter = new ZipWriter(new Uint8ArrayWriter());
-    await entryWriter.add("module.json", new TextReader('{"module":{}}'));
-    await entryWriter.add("ets/modules.abc", new TextReader("panda"));
-    const featureWriter = new ZipWriter(new Uint8ArrayWriter());
-    await featureWriter.add("module.json", new TextReader('{"module":{}}'));
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("pack.info", new TextReader('{"packages":[]}'));
-    await writer.add(
+    const entryHap = await writeApplicationZip(
+      "rea-harmony-entry-",
       "entry.hap",
-      new Uint8ArrayReader(await entryWriter.close()),
+      [
+        { path: "module.json", content: '{"module":{}}' },
+        { path: "ets/modules.abc", content: "panda" },
+      ],
     );
-    await writer.add(
+    const featureHsp = await writeApplicationZip(
+      "rea-harmony-feature-",
       "feature.hsp",
-      new Uint8ArrayReader(await featureWriter.close()),
+      [{ path: "module.json", content: '{"module":{}}' }],
     );
-    await writeFile(path, await writer.close());
-
-    const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
-    );
+    const path = await writeApplicationZip("rea-harmony-app-", "Bundle.app", [
+      { path: "pack.info", content: '{"packages":[]}' },
+      { path: "entry.hap", content: new Uint8Array(await readFile(entryHap)) },
+      {
+        path: "feature.hsp",
+        content: new Uint8Array(await readFile(featureHsp)),
+      },
+    ]);
+    const inventory = await inventoryApplicationPackage(path);
     expect(inventory.subject?.format).toBe("app-pack");
-    const result = projectHarmonyApplicationEvidence({
-      inventory_evidence: [inventory],
-    });
-    const projection = harmonyApplicationProjectionResultSchema.parse(
-      requireSuccessfulProjection(result).normalized_result,
+    const projection = requireDeterministicProjection(
+      projectHarmonyApplicationEvidence,
+      inventory,
+      harmonyApplicationProjectionResultSchema,
     );
     expect(projection.root_format).toBe("app-pack");
     expect(projection.components.manifests.map(({ path }) => path)).toEqual([
@@ -146,16 +124,11 @@ describe("HarmonyOS application projection", () => {
 
 describe("HarmonyOS packaging boundaries", () => {
   it("claims the FA model only from config.json", async () => {
-    const root = await createTestTempDirectory("rea-harmony-fa-");
-    const path = join(root, "Legacy.hap");
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("config.json", new TextReader('{"app":{}}'));
-    await writer.add("assets/js/default.js", new TextReader("legacy();"));
-    await writeFile(path, await writer.close());
-
-    const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
-    );
+    const path = await writeApplicationZip("rea-harmony-fa-", "Legacy.hap", [
+      { path: "config.json", content: '{"app":{}}' },
+      { path: "assets/js/default.js", content: "legacy();" },
+    ]);
+    const inventory = await inventoryApplicationPackage(path);
     const result = projectHarmonyApplicationEvidence({
       inventory_evidence: [inventory],
     });
