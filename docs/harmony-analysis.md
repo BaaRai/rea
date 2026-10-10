@@ -10,7 +10,10 @@ Recognized root formats:
 
 - `.hap` — installable application module
 - `.hsp` — runtime shared package
-- `.app` — distribution App Pack (HAP/HSP children are listed by path)
+- `.app` — distribution App Pack (HAP/HSP children are listed by path). The
+  App Pack classification applies to verified-ZIP-magic root inputs only; a
+  nested ZIP member ending in `.app` inside another package, such as an IPA,
+  keeps the generic `zip` classification.
 
 HarmonyOS `.har` shared libraries are intentionally not classified by suffix:
 `.har` also names HTTP Archive JSON, so a Harmony shared archive requires
@@ -48,15 +51,17 @@ closed on packages whose inventory cannot be authenticated.
 
 ## Verification lane
 
-`npm run fixtures:harmony` downloads the pinned VHome 5.0.111-beta unsigned
+`npm run fixtures:harmony` downloads the pinned VHome 2.6.14-beta unsigned
 HAP release (a real Stage-model package produced by the official OpenHarmony
 toolchain) with SHA-256 verification into `_reference/harmony-integration/`.
 The upstream project declares no license, so the fixture is downloaded at
-verification time and never redistributed.
+verification time and never redistributed. The upstream repository rotates
+and replaces release assets; a SHA-256 mismatch means the pin must be
+re-examined against the current upstream asset, not retried.
 
 ```sh
 npm run fixtures:harmony
-REA_HARMONY_TEST_HAP=_reference/harmony-integration/VHome-5.0.111-beta-unsigned.hap \
+REA_HARMONY_TEST_HAP=_reference/harmony-integration/VHome-2.6.14-beta-unsigned.hap \
   npm run verify:harmony
 ```
 
@@ -64,4 +69,7 @@ The lane exercises the compiled CLI and a stdio MCP server against the real
 package: `inspect_artifact` authenticity, projection determinism, Stage-model
 classification, exact bytecode/native-library/resource component sets, the
 unsigned-build signing boundary, N-API bridge hypotheses, complete-inventory
-coverage, and CLI/MCP result parity.
+coverage, and CLI/MCP result parity. The pinned package is an unsigned build,
+so the lane asserts the signing component is empty; an empty signing list
+never means a package is unsigned, because packaging-tool signatures live in
+the ZIP signing block rather than archive entries.

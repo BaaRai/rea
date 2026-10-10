@@ -123,6 +123,35 @@ describe("HarmonyOS application projection", () => {
 });
 
 describe("HarmonyOS packaging boundaries", () => {
+  it("keeps a nested .app ZIP member inside an IPA out of the App Pack classification", async () => {
+    const nested = await writeApplicationZip(
+      "rea-harmony-nested-",
+      "Nested.app",
+      [{ path: "inner.txt", content: "not an app pack" }],
+    );
+    const path = await writeApplicationZip("rea-harmony-ipa-", "Fixture.ipa", [
+      { path: "Payload/App.app/Info.plist", content: "plist" },
+      {
+        path: "Payload/Nested.app",
+        content: new Uint8Array(await readFile(nested)),
+      },
+    ]);
+    const inventory = await inventoryApplicationPackage(path);
+    expect(inventory.subject?.format).toBe("ipa");
+    const occurrences = (
+      inventory.normalized_result as {
+        occurrences: Array<{
+          logical_path: string;
+          artifact_format: string;
+        }>;
+      }
+    ).occurrences;
+    const nestedOccurrence = occurrences.find(
+      ({ logical_path }) => logical_path === "Payload/Nested.app",
+    );
+    expect(nestedOccurrence?.artifact_format).toBe("zip");
+  });
+
   it("claims the FA model only from config.json", async () => {
     const path = await writeApplicationZip("rea-harmony-fa-", "Legacy.hap", [
       { path: "config.json", content: '{"app":{}}' },

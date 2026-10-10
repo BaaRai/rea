@@ -24,7 +24,10 @@ export const hasZipSignature = (bytes: Uint8Array): boolean =>
  * This is deliberately extension-only. Callers must separately verify ZIP
  * magic before trusting the classification for a root input. HarmonyOS `.har`
  * is intentionally absent: the suffix also names HTTP Archive JSON, so a
- * Harmony shared archive is only established from verified ZIP bytes.
+ * Harmony shared archive is only established from verified ZIP bytes. The
+ * HarmonyOS App Pack suffix `.app` is also absent here: it applies only to
+ * root inputs (see `classifyAndHashRoot`), because a nested ZIP entry ending
+ * in `.app` inside another package, such as an IPA, is not an App Pack.
  */
 export const zipPackageFormatForPath = (
   path: string,
@@ -38,7 +41,6 @@ export const zipPackageFormatForPath = (
   if (lower.endsWith(".appx") || lower.endsWith(".appxbundle")) return "appx";
   if (lower.endsWith(".hap")) return "hap";
   if (lower.endsWith(".hsp")) return "hsp";
-  if (lower.endsWith(".app")) return "app-pack";
   return undefined;
 };
 

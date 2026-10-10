@@ -3,6 +3,7 @@ import { z } from "zod";
 import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { nativeRuntimeConvention } from "../nativeConvention.js";
 import {
   applicationInventoryProjectionInputSchema,
   bridgeCandidateCoverageSchema,
@@ -42,7 +43,9 @@ export const harmonyApplicationProjectionResultSchema = z.strictObject({
     signing: z.array(componentSchema),
   }),
   app_pack_children: z.array(componentSchema),
-  runtime_families: z.array(z.enum(["ark", "native", "javascript"])),
+  runtime_families: z.array(
+    z.enum(["ark", "native", "javascript", "react-native", "flutter", "unity"]),
+  ),
   bridge_candidates: z.array(
     projectedBridgeCandidateSchema([
       "managed-and-native-content",
@@ -87,10 +90,12 @@ export const projectHarmonyApplication = (
     "Manifest, module, resource, and signing semantics require a dedicated HarmonyOS provider; this projection reports exact inventory paths and hashes only.",
     "The packaging model is a path-presence heuristic: a Stage model is claimed only from module.json and a FA model only from config.json; both can coexist with unusual layouts.",
     "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid Ark bytecode.",
+    "The signing component lists META-INF certificate-entry suffixes only; signatures applied by the packaging tool live in the ZIP signing block rather than archive entries, so an empty signing list does not mean the package is unsigned.",
     "Bridge candidates are path-based hypotheses, not decoded N-API declarations or observed runtime calls.",
     ...(rootFormat === "app-pack"
       ? [
           "App Pack child packages are listed by inventory path only; their contents are not recursively inventoried by this projection.",
+          "The app-pack root classification is a verified-ZIP-magic plus .app suffix rule; the projection does not require pack.info or child packages before reporting the root format.",
         ]
       : []),
     "HarmonyOS .har shared libraries are not identified by this projection; the .har suffix also names HTTP Archive JSON, so that classification requires verified ZIP bytes.",
@@ -180,6 +185,10 @@ const runtimeFamilies = (all: readonly Component[]) => {
   if (all.some(({ format }) => format === "elf")) families.add("native");
   if (paths.some((path) => /\.(?:m?js|cjs)$/.test(path)))
     families.add("javascript");
+  for (const { path } of all) {
+    const convention = nativeRuntimeConvention(path);
+    if (convention !== null) families.add(convention);
+  }
   return [...families].sort(compareProjectionStrings);
 };
 

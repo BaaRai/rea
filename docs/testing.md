@@ -454,10 +454,11 @@ Authenticated IPA and macOS application inventory projection is documented in
 [Apple application analysis](apple-application-analysis.md).
 
 `npm run verify:harmony` requires no SDK or engine: it projects the pinned
-public VHome 5.0.111-beta unsigned HAP (a real Stage-model OpenHarmony
-package) fetched by `npm run fixtures:harmony` into ignored
-`_reference/harmony-integration/`, set as `REA_HARMONY_TEST_HAP`. The lane
-exercises `inspect_artifact`, projection determinism, Stage-model and
+public VHome 2.6.14-beta unsigned HAP (a real Stage-model OpenHarmony
+package; the upstream rotates release assets, so a SHA-256 mismatch means
+the pin needs re-examination) fetched by `npm run fixtures:harmony` into
+ignored `_reference/harmony-integration/`, set as `REA_HARMONY_TEST_HAP`.
+The lane exercises `inspect_artifact`, projection determinism, Stage-model and
 component classification, the unsigned signing boundary, N-API bridge
 hypotheses and CLI/MCP parity. See
 [HarmonyOS package inventory](harmony-analysis.md) for boundaries; HarmonyOS
