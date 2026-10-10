@@ -27,6 +27,8 @@ export const authorizedMainFrame = async ({
   operation,
   authorizedTargetUrl,
 }: AuthorizedMainFrameOptions): Promise<unknown> => {
+  let lastUrl: string | undefined;
+  let lastResult: unknown;
   for (let attempt = 0; attempt < 80; attempt += 1) {
     const result = await connection.send(
       "Page.getFrameTree",
@@ -34,20 +36,23 @@ export const authorizedMainFrame = async ({
       sessionId,
       signal,
     );
-    const url = mainFrameUrl(result);
-    if (allowedSanitizedUrl(url, allowedOrigins) !== undefined) return result;
-    if (isHttpUrl(url))
-      throw new BrowserObservationError(operation, "target_not_allowed");
-    // Chromium 150 reports an unparseable placeholder as the frame-tree URL,
-    // so an observable origin never arrives; the attach-authorized target URL
-    // stands in. Parseable non-HTTP pages such as about:blank keep waiting.
-    if (
-      isUnparseableFrameUrl(url) &&
-      authorizedTargetUrl !== undefined &&
-      allowedSanitizedUrl(authorizedTargetUrl, allowedOrigins) !== undefined
-    )
+    lastResult = result;
+    lastUrl = mainFrameUrl(result);
+    if (allowedSanitizedUrl(lastUrl, allowedOrigins) !== undefined)
       return result;
+    if (isHttpUrl(lastUrl))
+      throw new BrowserObservationError(operation, "target_not_allowed");
     await delayWithCancellation(25, operation, signal);
   }
+  // Masked Chromium builds report an unparseable placeholder forever, so an
+  // observable origin never arrives; once the commit wait is exhausted the
+  // attach-authorized target URL stands in. Pre-commit placeholders resolve
+  // above, and parseable non-HTTP pages such as about:blank keep failing.
+  if (
+    isUnparseableFrameUrl(lastUrl) &&
+    authorizedTargetUrl !== undefined &&
+    allowedSanitizedUrl(authorizedTargetUrl, allowedOrigins) !== undefined
+  )
+    return lastResult;
   throw new BrowserObservationError(operation, "target_not_allowed");
 };

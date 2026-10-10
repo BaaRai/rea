@@ -15,13 +15,13 @@ import {
   cdpStringValue,
 } from "./CdpCaptureValues.js";
 
-/** Tolerate storage requests the browser cannot resolve.
+/** Tolerate storage requests the browser cannot resolve to a live frame.
  *
- * Chromium 150 masks frame origins, so its storage agents reject otherwise
- * valid, attach-authorized requests with frame-not-found errors under
- * different codes and wordings. These probes are optional evidence, so any
- * browser-side command rejection is unavailability; transport and
- * cancellation failures still propagate.
+ * Masked Chromium builds expose no frame URLs, so their storage agents reject
+ * otherwise valid, attach-authorized requests with frame-not-found errors
+ * under different codes and wordings. Those probes are optional evidence, so
+ * this specific family counts as unavailability; every other browser-side
+ * rejection is a protocol failure and still propagates.
  */
 const storageOptionalCommand = async (
   context: Parameters<typeof captureStorage>[0],
@@ -32,12 +32,18 @@ const storageOptionalCommand = async (
   try {
     return await optionalCdpCommand(context, method, parameters, limitations);
   } catch (cause: unknown) {
-    if (cause instanceof CdpCommandRejection) {
+    if (isFrameNotFoundRejection(cause)) {
       limitations.push(method + " was unavailable from this browser target.");
       return undefined;
     }
     throw cause;
   }
+};
+
+const isFrameNotFoundRejection = (cause: unknown): boolean => {
+  if (!(cause instanceof CdpCommandRejection)) return false;
+  if (cause.code !== -32_000 && cause.code !== -32_602) return false;
+  return (cause.reportedMessage ?? "").toLowerCase().includes("frame found");
 };
 
 /** Capture redacted storage metadata for an authorized page and its origin. */

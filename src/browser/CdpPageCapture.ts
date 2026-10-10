@@ -100,7 +100,7 @@ const captureAuthorizedPage = async (
   const { context, allowedOrigins, limitations } = state;
   const { connection, sessionId, input, signal } = context;
   await authorizeObservationWindow(state);
-  captureJsonResponseBodies(state);
+  await captureJsonResponseBodies(state);
   const frameResult = await authorizedMainFrame({
     connection: context.connection,
     sessionId: context.sessionId,
