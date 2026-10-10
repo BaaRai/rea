@@ -43,7 +43,8 @@ const storageOptionalCommand = async (
 const isFrameNotFoundRejection = (cause: unknown): boolean => {
   if (!(cause instanceof CdpCommandRejection)) return false;
   if (cause.code !== -32_000 && cause.code !== -32_602) return false;
-  return (cause.reportedMessage ?? "").toLowerCase().includes("frame found");
+  const message = (cause.reportedMessage ?? "").toLowerCase();
+  return message.includes("frame") && message.includes("found");
 };
 
 /** Capture redacted storage metadata for an authorized page and its origin. */
