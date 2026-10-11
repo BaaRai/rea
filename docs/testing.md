@@ -1296,7 +1296,15 @@ request. `javascript-module-view` exercises summary analysis, module paging and
 item inspection in a tree with unrelated modules; its routing and text checks
 remain heuristic, so review the retained transcript for selector choice and
 coverage claims. Set `REA_CODEX_CLI` to an installed Codex executable and
-`REA_AGENT_EVAL_MODEL` to an account-supported model. Use an external resource
+`REA_AGENT_EVAL_MODEL` to an account-supported model.
+The same scenarios, golden claims and gates can run through Claude Code with
+`REA_AGENT_EVAL_CLIENT=claude-code` (`codex` stays the default). The client runs
+headless (`claude -p --output-format stream-json`) in the same disposable HOME,
+with an isolated `CLAUDE_CONFIG_DIR` holding only the REA registration from
+`rea setup --client claude_code` and copied authentication; transcripts are
+normalized to the shared event shape before grading, and the report gains a
+`client` field. Set `REA_CLAUDE_CLI` to an installed Claude Code executable.
+Gemini CLI and other clients are not verified by this lane. Use an external resource
 limit for the whole process tree when testing on a constrained host; a Node
 heap limit alone does not bound client and child-process memory.
 

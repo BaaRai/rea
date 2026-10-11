@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { evaluateCodexEvents } from "../dist/evaluation/CodexAgentEval.js";
+import { claudeCodeEventsToCodexEvents } from "../dist/evaluation/ClaudeAgentEval.js";
 import {
   createAgentEvaluationFixtures,
   agentFixtureClaims,
@@ -31,6 +32,12 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const verifierRun = createVerifierRun();
 const timeoutMs = Number(process.env.REA_AGENT_EVAL_TIMEOUT_MS ?? 480_000);
 const codex = process.env.REA_CODEX_CLI ?? "codex";
+const agentClient = process.env.REA_AGENT_EVAL_CLIENT ?? "codex";
+if (agentClient !== "codex" && agentClient !== "claude-code")
+  throw new Error(
+    "REA_AGENT_EVAL_CLIENT must be codex or claude-code; other clients are not verified",
+  );
+const claudeCli = process.env.REA_CLAUDE_CLI ?? "claude";
 const optionalModel = process.env.REA_AGENT_EVAL_MODEL;
 
 if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 10_000)
@@ -48,8 +55,11 @@ const account = join(evaluationRoot, "account");
 const codexHome = join(evaluationRoot, "codex");
 const authPath = join(codexHome, "auth.json");
 const skillDestination = join(
-  account,
-  ".agents/skills/reverse-engineer-anything",
+  agentClient === "codex"
+    ? join(account, ".agents/skills")
+    : // Claude Code reads skills from its own config directory.
+      join(evaluationRoot, "claude-config", "skills"),
+  "reverse-engineer-anything",
 );
 const evaluationEnvironment = {
   ...Object.fromEntries(
@@ -60,6 +70,9 @@ const evaluationEnvironment = {
   HOME: account,
   USERPROFILE: account,
   CODEX_HOME: codexHome,
+  // Claude Code keeps registration and skills under CLAUDE_CONFIG_DIR; the
+  // isolated directory holds only what setup wrote plus copied credentials.
+  CLAUDE_CONFIG_DIR: join(evaluationRoot, "claude-config"),
   XDG_CONFIG_HOME: join(account, ".config"),
   XDG_DATA_HOME: join(account, ".local/share"),
   XDG_CACHE_HOME: join(account, ".cache"),
@@ -68,7 +81,9 @@ const evaluationEnvironment = {
 };
 
 try {
-  const codexVersion = await readCommandVersion(codex);
+  const codexVersion = await readCommandVersion(
+    agentClient === "codex" ? codex : claudeCli,
+  );
   await Promise.all([
     mkdir(fixtureRoot, { recursive: true }),
     mkdir(account),
@@ -76,15 +91,35 @@ try {
   ]);
   // Reuse authentication only. User config, plugins, rules, history and skills
   // must not make a fresh installed-skill trial pass accidentally.
-  try {
-    await copyFile(
-      join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
-      authPath,
-    );
-    await chmod(authPath, 0o600);
-  } catch (cause) {
-    if (cause?.code !== "ENOENT") throw cause;
-    // Environment/API-key authentication can work without a local auth file.
+  if (agentClient === "codex") {
+    try {
+      await copyFile(
+        join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
+        authPath,
+      );
+      await chmod(authPath, 0o600);
+    } catch (cause) {
+      if (cause?.code !== "ENOENT") throw cause;
+      // Environment/API-key authentication can work without a local auth file.
+    }
+  } else {
+    await mkdir(join(evaluationRoot, "claude-config"), { mode: 0o700 });
+    try {
+      await copyFile(
+        join(
+          process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
+          ".credentials.json",
+        ),
+        join(evaluationRoot, "claude-config", ".credentials.json"),
+      );
+      await chmod(
+        join(evaluationRoot, "claude-config", ".credentials.json"),
+        0o600,
+      );
+    } catch (cause) {
+      if (cause?.code !== "ENOENT") throw cause;
+      // Subscription or API-key authentication can work without a local file.
+    }
   }
   await writeFile(
     join(codexHome, "config.toml"),
@@ -98,7 +133,7 @@ try {
         join(repositoryRoot, "scripts/rea.mjs"),
         "setup",
         "--client",
-        "codex",
+        agentClient === "codex" ? "codex" : "claude_code",
         approval,
         "--json",
       ],
@@ -256,12 +291,14 @@ try {
     const fixtureId = scenario.fixtureScenarioId ?? scenario.id;
     const fixtureClaims = agentFixtureClaims(fixtureId, targets);
     const answerInstructions = agentFixtureAnswerInstructions(fixtureId);
-    const execution = await runCodex(
+    const prompt =
       answerInstructions.length === 0
         ? scenario.prompt
-        : `${scenario.prompt}\n\nThis closed factual rubric needs complete producer Evidence in the transcript. Request complete detail on each initial application analysis when supported; summary or view records alone are not accepted by this rubric.\n\n${answerInstructions}`,
-      scenario.approvedTools ?? [],
-    );
+        : `${scenario.prompt}\n\nThis closed factual rubric needs complete producer Evidence in the transcript. Request complete detail on each initial application analysis when supported; summary or view records alone are not accepted by this rubric.\n\n${answerInstructions}`;
+    const execution =
+      agentClient === "codex"
+        ? await runCodex(prompt, scenario.approvedTools ?? [])
+        : await runClaudeCode(prompt, scenario.approvedTools ?? []);
     const transcriptDirectory = process.env.REA_AGENT_EVAL_TRANSCRIPT_DIR;
     if (transcriptDirectory !== undefined) {
       const transcriptPath = resolve(
@@ -317,13 +354,17 @@ try {
     evaluationScope: "routing_workflow_and_configured_fixture_claims",
     factualCorrectness,
     verifier_run: await completeVerifierRun(verifierRun),
-    codex,
-    codexVersion,
+    client: agentClient,
+    codex: agentClient === "codex" ? codex : null,
+    codexVersion: agentClient === "codex" ? codexVersion : null,
+    clientCli: agentClient === "codex" ? codex : claudeCli,
+    clientVersion: codexVersion,
     model: optionalModel ?? null,
     installation: {
-      method: "rea_setup_codex",
+      method:
+        agentClient === "codex" ? "rea_setup_codex" : "rea_setup_claude_code",
       isolatedHome: true,
-      isolatedCodexHome: true,
+      isolatedCodexHome: agentClient === "codex",
       skillVersion: PRODUCT_IDENTITY.skillVersion,
       authentication: "caller_auth_only_removed_after_run",
     },
@@ -518,6 +559,69 @@ async function runCodex(prompt, approvedTools) {
   });
   await linesClosed;
   return { events, exitCode, stderr: stderr.join("").slice(0, 32_768) };
+}
+
+/**
+ * Run one scenario through headless Claude Code. The isolated CLAUDE_CONFIG_DIR
+ * holds the REA registration from setup and copied authentication only;
+ * --strict-mcp-config keeps foreign servers out of the run. Stream events are
+ * normalized to the shared transcript shape before evaluation.
+ */
+async function runClaudeCode(prompt, approvedTools) {
+  const arguments_ = [
+    "-p",
+    prompt,
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--strict-mcp-config",
+    ...approvedTools.flatMap((name) => ["--allowedTools", `mcp__rea__${name}`]),
+  ];
+  const child = spawn(claudeCli, arguments_, {
+    cwd: evaluationRoot,
+    env: evaluationEnvironment,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const rawEvents = [];
+  const stderr = [];
+  const lines = createInterface({ input: child.stdout });
+  const linesClosed = new Promise((resolveClose) =>
+    lines.once("close", resolveClose),
+  );
+  lines.on("line", (line) => {
+    try {
+      rawEvents.push(JSON.parse(line));
+    } catch {
+      stderr.push(`non-json stdout: ${line}`);
+    }
+  });
+  child.stderr.on("data", (chunk) => {
+    if (stderr.join("").length < 32_768) stderr.push(chunk.toString("utf8"));
+  });
+  const exitCode = await new Promise((resolveExit, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(
+        new Error(
+          `Claude Code evaluation timed out after ${String(timeoutMs)}ms`,
+        ),
+      );
+    }, timeoutMs);
+    child.once("error", (cause) => {
+      clearTimeout(timeout);
+      reject(cause);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timeout);
+      resolveExit(code ?? 1);
+    });
+  });
+  await linesClosed;
+  return {
+    events: claudeCodeEventsToCodexEvents(rawEvents),
+    exitCode,
+    stderr: stderr.join("").slice(0, 32_768),
+  };
 }
 
 async function runProcess(
