@@ -391,6 +391,45 @@ it.each(["pe", "elf"] as const)(
   },
 );
 
+it.each([32, 64] as const)(
+  "reads PE build metadata whose %d-bit data section declares VirtualSize zero",
+  (bits) => {
+    const fixture = createGoBinaryFixture({ format: "pe", bits });
+    const section = 152 + (bits === 64 ? 112 : 96);
+    fixture.bytes.writeUInt32LE(0, section + 8);
+    expect(readGoBinaryImage(fixture.bytes).build_info).toMatchObject({
+      encoding: "inline",
+      go_version: "go1.26.0",
+      module_text: GO_MODULE_TEXT,
+      header_offset: fixture.headerOffset,
+      version_location: { offset: fixture.versionOffset, bytes: 8 },
+      module_location: {
+        offset: fixture.moduleOffset,
+        bytes: fixture.moduleBytes.length,
+      },
+    });
+  },
+);
+
+it.each([32, 64] as const)(
+  "bounds the zero-VirtualSize %d-bit PE search by SizeOfRawData",
+  (bits) => {
+    const fixture = createGoBinaryFixture({
+      format: "pe",
+      bits,
+      omitBuildInfo: true,
+    });
+    const section = 152 + (bits === 64 ? 112 : 96);
+    fixture.bytes.writeUInt32LE(0, section + 8);
+    fixture.bytes.writeUInt32LE(2040, section + 16);
+    Buffer.from("ff20476f206275696c64696e663a", "hex").copy(
+      fixture.bytes,
+      3056,
+    );
+    expect(readGoBinaryImage(fixture.bytes).build_info).toBeNull();
+  },
+);
+
 it.each([0n, 3n])(
   "rejects reserved extended ELF section counts containing %s",
   (count) => {
